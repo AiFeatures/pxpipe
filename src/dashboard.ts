@@ -385,6 +385,16 @@ export class DashboardState {
     multicol2_tokens_per_img: number;
     n: number;
     mode: 'joint' | 'constrained';
+    /** Coefficient of variation (stdev/mean) on outgoing_text_chars across
+     *  the fit-sample ring. Reported as a unitless ratio. Operator uses
+     *  this to judge confidence in α: ≥5% = robust, 1-5% = thin but
+     *  measured, <1% = essentially a mean ratio estimator. */
+    text_cv: number;
+    /** Coefficient of variation on image_pixels. Zero in steady-state
+     *  single-session warm-cache traffic (same cached image every turn).
+     *  Non-zero signals cross-session variance or cache-rotation events
+     *  reached the fit ring. */
+    pixels_cv: number;
   } | null {
     const samples = this.fitSamples;
     const n = samples.length;
@@ -422,13 +432,22 @@ export class DashboardState {
     // whether token cost is coming from text or pixels and the α/β split
     // wanders ±15 pp per sample (HANDOFF "What's blocking calibration").
     const MIN_CV_JOINT = 0.05;
-    // Constrained mode threshold: 2% on TEXT only. β is pinned (no split
-    // to disambiguate), so we're fitting one parameter through the origin.
-    // 1-D OLS is numerically stable at much lower variance — typical live
-    // single-session traffic has 3-4% text CV (verified 2026-05-19 live:
-    // 117k/127k/128k chars over three turns = 3.84% CV). The 2% floor
-    // still rejects "literally identical text three times in a row".
-    const MIN_CV_CONSTRAINED = 0.02;
+    // Constrained mode floor: any non-zero text variance is mathematically
+    // sufficient — with β pinned we're fitting `α = Σ(r·x)/Σ(x²)` through
+    // the origin, which is numerically stable at any cvX > 0. The 0.1%
+    // floor is purely defensive against pathological "all six samples are
+    // byte-identical" scenarios where the formula degenerates.
+    //
+    // We surface text_cv on the response so the operator sees confidence
+    // directly in the badge instead of relying on a threshold to gatekeep:
+    // 1% CV is thin but measured, 5% CV is robust, 0.5% CV is mostly the
+    // mean-residual-over-mean-text ratio estimator. All honest, just
+    // different signal/noise ratios — the operator can interpret.
+    //
+    // Verified live 2026-05-19: real steady-state single-session traffic
+    // has 1-2% text CV turn-to-turn. The earlier 2% floor blocked the fit
+    // from ever firing on representative production load.
+    const MIN_CV_CONSTRAINED = 0.001;
 
     // Anthropic's published per-pixel rate for the default image tiling:
     // 1 token per ~750 pixels (≈ 0.001333). Used by the constrained fallback
@@ -454,6 +473,8 @@ export class DashboardState {
             multicol2_tokens_per_img: Math.round(1028 * 1559 * beta),
             n,
             mode: 'joint',
+            text_cv: round4(cvX),
+            pixels_cv: round4(cvP),
           };
         }
       }
@@ -484,6 +505,8 @@ export class DashboardState {
       multicol2_tokens_per_img: Math.round(1028 * 1559 * ANTHROPIC_BETA),
       n,
       mode: 'constrained',
+      text_cv: round4(cvX),
+      pixels_cv: round4(cvP),
     };
   }
 
@@ -951,13 +974,26 @@ async function tick() {
     if (!fit) {
       regime.textContent = 'stale constants (no fit yet)';
       regime.style.color = '#d29922'; // amber: be skeptical
-    } else if (fit.mode === 'joint') {
-      const tier = fit.n >= 10 ? 'high' : 'tentative';
-      regime.textContent = \`empirical · joint OLS (n=\${fit.n}, \${tier})\`;
-      regime.style.color = fit.n >= 10 ? '#3fb950' : '#d29922';
     } else {
-      regime.textContent = \`constrained · α-only (n=\${fit.n}, β pinned 1/750)\`;
-      regime.style.color = '#58a6ff'; // blue: measured but partial
+      // Show text_cv as a percentage so the operator can judge α-confidence
+      // at a glance: >=5% is robust, 1-5% is thin but measured, <1% is
+      // essentially a mean-ratio estimator. Same number on both modes
+      // since they use the same residual signal.
+      const cvPct = (fit.text_cv * 100).toFixed(1);
+      if (fit.mode === 'joint') {
+        const tier = fit.n >= 10 ? 'high' : 'tentative';
+        regime.textContent =
+          \`empirical · joint OLS (n=\${fit.n}, text CV \${cvPct}%, \${tier})\`;
+        regime.style.color = fit.n >= 10 ? '#3fb950' : '#d29922';
+      } else {
+        // Constrained mode: color tracks text_cv since β is pinned and
+        // confidence in the headline depends on text variance alone.
+        const robust = fit.text_cv >= 0.05;
+        const thin = fit.text_cv >= 0.01;
+        regime.textContent =
+          \`constrained · α-only (n=\${fit.n}, text CV \${cvPct}%, β pinned 1/750)\`;
+        regime.style.color = robust ? '#58a6ff' : (thin ? '#d29922' : '#8b949e');
+      }
     }
     const tbody = document.getElementById('rows');
     tbody.innerHTML = '';

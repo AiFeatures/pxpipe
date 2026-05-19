@@ -126,13 +126,35 @@ describe('DashboardState.fitCosts() — empirical α/β regression', () => {
     expect(fit!.alpha).toBeGreaterThan(0);
   });
 
-  it('still rejects below the 2% floor (literally-identical-text case)', () => {
-    // Below 2% text CV the residual signal is too thin to measure α even
-    // with β pinned. Make sure we still return null instead of producing a
-    // garbage 1-D fit.
+  it('activates constrained mode at real steady-state 1-2% text CV', () => {
+    // Live-traffic-shape: 6 samples with 1.33% text CV and pixels exactly
+    // constant. Pre-fix (2% gate) this returned null and the dashboard
+    // stuck on stale constants — the regression we're guarding against.
+    // Post-fix the constrained formula α=Σ(r·x)/Σ(x²) runs (numerically
+    // fine at any non-zero text variance) and surfaces text_cv so the
+    // operator sees confidence directly.
+    dash.update(ev({ textChars: 132_738, pixels: 22_792_816, input: 6, cacheCreate: 710,  cacheRead: 142_547 }));
+    dash.update(ev({ textChars: 133_021, pixels: 22_792_816, input: 1, cacheCreate: 316,  cacheRead: 143_257 }));
+    dash.update(ev({ textChars: 133_610, pixels: 22_792_816, input: 1, cacheCreate: 1000, cacheRead: 143_573 }));
+    dash.update(ev({ textChars: 134_105, pixels: 22_792_816, input: 1, cacheCreate: 1170, cacheRead: 144_068 }));
+    dash.update(ev({ textChars: 134_718, pixels: 22_792_816, input: 1, cacheCreate: 1380, cacheRead: 145_330 }));
+    dash.update(ev({ textChars: 138_097, pixels: 22_792_816, input: 1, cacheCreate: 2200, cacheRead: 146_148 }));
+    const fit = dash.fitCosts();
+    expect(fit).not.toBeNull();
+    expect(fit!.mode).toBe('constrained');
+    expect(fit!.text_cv).toBeGreaterThan(0.005); // ~1.3% in this fixture
+    expect(fit!.text_cv).toBeLessThan(0.05);
+    expect(fit!.pixels_cv).toBe(0);
+    expect(fit!.alpha).toBeGreaterThan(0);
+  });
+
+  it('still rejects literally-byte-identical text (degenerate floor)', () => {
+    // Pathological case: all samples have IDENTICAL text. cvX = 0. We
+    // require at least 0.1% variance to fit — below that we'd be dividing
+    // mean residual by mean text with no information about slope.
     dash.update(ev({ textChars: 130_000, pixels: 22_792_816, input: 6, cacheCreate: 1116, cacheRead: 124_236 }));
-    dash.update(ev({ textChars: 130_500, pixels: 22_792_816, input: 6, cacheCreate: 1116, cacheRead: 124_236 }));
-    dash.update(ev({ textChars: 130_800, pixels: 22_792_816, input: 6, cacheCreate: 1116, cacheRead: 124_236 }));
+    dash.update(ev({ textChars: 130_000, pixels: 22_792_816, input: 6, cacheCreate: 1116, cacheRead: 124_236 }));
+    dash.update(ev({ textChars: 130_000, pixels: 22_792_816, input: 6, cacheCreate: 1116, cacheRead: 124_236 }));
     expect(dash.fitCosts()).toBeNull();
   });
 
