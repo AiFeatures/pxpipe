@@ -138,6 +138,21 @@ interface Totals {
    *  doesn't touch output). Without this the headline ignores half the
    *  bill on output-heavy sessions. */
   outputWeighted: number;
+  /** Sum of ground-truth output character counts from the SSE/JSON scanner
+   *  (see `OutputMeasurement` in proxy.ts). These three accumulators are
+   *  independent of Anthropic's `usage.output_tokens` — they let the operator
+   *  compare what we measured vs what Anthropic billed and surface the gap
+   *  the redacted_thinking opaque blocks create. Counted in Unicode code
+   *  units (UTF-16 string .length). */
+  textCharsMeasured: number;
+  thinkingCharsMeasured: number;
+  toolUseCharsMeasured: number;
+  /** Number of `redacted_thinking` content blocks we saw. We can't read
+   *  their length (server-encrypted bytes) so we count blocks instead. */
+  redactedBlockCountMeasured: number;
+  /** How many events contributed measurement counters. Lets the UI annotate
+   *  the panel ("N of M events measured") when the scanner fell back. */
+  eventsWithMeasurement: number;
   startedAt: number;
 }
 
@@ -181,6 +196,11 @@ export class DashboardState {
     actualInputWeighted: 0,
     baselineInputWeighted: 0,
     outputWeighted: 0,
+    textCharsMeasured: 0,
+    thinkingCharsMeasured: 0,
+    toolUseCharsMeasured: 0,
+    redactedBlockCountMeasured: 0,
+    eventsWithMeasurement: 0,
     startedAt: Date.now() / 1000,
   };
   private latestPng: Uint8Array | null = null;
@@ -291,6 +311,19 @@ export class DashboardState {
       this.totals.baselineInputWeighted += baselineInputEff;
       this.totals.actualInputWeighted += actualInputEff;
       this.totals.outputWeighted += outputEquiv;
+    }
+
+    // Measurement totals are independent of usage/baseline gating — they
+    // accumulate whenever the scanner produced numbers. The scanner sets
+    // measurement to undefined on 5xx (no body to scan) and on unknown
+    // content-types; we count an event as "measured" when it has any.
+    const m = ev.measurement;
+    if (m) {
+      this.totals.textCharsMeasured += m.textChars;
+      this.totals.thinkingCharsMeasured += m.thinkingChars;
+      this.totals.toolUseCharsMeasured += m.toolUseChars;
+      this.totals.redactedBlockCountMeasured += m.redactedBlockCount;
+      this.totals.eventsWithMeasurement += 1;
     }
 
     const row: RecentRow = {
@@ -425,6 +458,18 @@ export class DashboardState {
         cache_read_multiplier: 0.1,
         source: 'docs.anthropic.com/en/docs/about-claude/pricing (verified 2026-05-19)',
       },
+      // Honest output measurement — char counts from the SSE/JSON scanner,
+      // independent of Anthropic's `usage.output_tokens`. Surfaces the gap
+      // the May-2026 weekly-meter audit hypothesized (redacted_thinking adds
+      // billed tokens that we can't see). `events_with_measurement` lets the
+      // operator weigh how representative the numbers are; when it's near
+      // `requests`, the gap is real. When it's 0, the scanner never landed
+      // (5xx-heavy session, no /v1/messages traffic).
+      measured_text_chars: this.totals.textCharsMeasured,
+      measured_thinking_chars: this.totals.thinkingCharsMeasured,
+      measured_tool_use_chars: this.totals.toolUseCharsMeasured,
+      measured_redacted_block_count: this.totals.redactedBlockCountMeasured,
+      events_with_measurement: this.totals.eventsWithMeasurement,
       uptime_sec: uptimeSec,
       compression_enabled: this.compressionEnabled,
     };
@@ -1060,6 +1105,24 @@ function renderSavingsMath(s) {
              '<span class="op">=</span> actual_input + output')
     + fmtRow('baseline_token_equivalent', s.baseline_token_equivalent,
              '(unproxied counterfactual, same ×' + (pa.output_multiplier ?? 5) + ' on output)')
+    + '<div style="height:6px"></div>'
+    + '<div><span class="k">measured vs billed:</span> <span class="v">'
+      + 'we now SSE-tee response bodies + count text_delta / thinking_delta / tool_use chars '
+      + 'so you can compare what we actually saw on the wire against output_tokens. '
+      + 'The redacted_thinking block count is included because Anthropic ships those '
+      + 'as opaque server-encrypted bytes with no char count — they inflate output_tokens '
+      + 'invisibly. This is what surfaced the May-2026 weekly-meter gap.</span></div>'
+    + '<div style="height:6px"></div>'
+    + fmtRow('events_with_measurement', s.events_with_measurement,
+             '(events where SSE/JSON scanner produced char counts)')
+    + fmtRow('measured_text_chars', s.measured_text_chars,
+             '(content_block_delta · text_delta + response content[].text)')
+    + fmtRow('measured_thinking_chars', s.measured_thinking_chars,
+             '(content_block_delta · thinking_delta — visible reasoning text)')
+    + fmtRow('measured_tool_use_chars', s.measured_tool_use_chars,
+             '(content_block_delta · input_json_delta + tool_use blocks)')
+    + fmtRow('measured_redacted_blocks', s.measured_redacted_block_count,
+             '(opaque encrypted blocks — chars unavailable, billed but unmeasurable)')
     + '<span class="src">measured · no estimation</span>';
 }
 
