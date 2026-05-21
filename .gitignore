@@ -25,3 +25,18 @@ __pycache__/
 # Scratch diagrams from drawmode MCP — exploration artifacts, not part of the repo
 *.drawmode.ts
 *.excalidraw
+
+# Agent collaboration scratch — private session memory, never in git.
+# Includes long-form project memory for AI assistants (CLAUDE.md, AGENTS.md,
+# etc.) and per-tool workspace folders. These persist locally so successive
+# AI sessions retain context, but they should never ship to GitHub —
+# treat them like ~/.ssh: useful, local-only, never shared.
+CLAUDE.md
+AGENTS.md
+HANDOFF.md
+SESSION_PLAYBOOK.md
+.claude/
+.codex/
+.cursor/
+.aider*
+.continue/
