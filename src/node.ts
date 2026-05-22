@@ -192,9 +192,6 @@ async function dispatchDashboard(
     case 'png':
       if (method !== 'GET') return undefined;
       return dashboard.servePng();
-    case 'session-html':
-      if (method !== 'GET') return undefined;
-      return dashboard.serveSessionHtml(route.sessionId, port);
     case 'api-sessions': {
       if (method !== 'GET') return undefined;
       return dashboard.serveSessionsJson({
@@ -202,42 +199,9 @@ async function dispatchDashboard(
         since: url.searchParams.get('since') ?? undefined,
       });
     }
-    case 'api-session': {
-      if (method !== 'GET') return undefined;
-      const includeBodies = url.searchParams.get('include_bodies') === '1';
-      return dashboard.serveSessionJson(route.sessionId, includeBodies);
-    }
-    case 'api-disk':
-      if (method !== 'GET') return undefined;
-      return dashboard.serveDiskJson();
     case 'api-stats':
       if (method !== 'GET') return undefined;
       return dashboard.serveApiStats();
-    case 'api-prune': {
-      if (method !== 'POST') {
-        return new Response(
-          JSON.stringify({ error: 'use POST' }),
-          { status: 405, headers: { 'content-type': 'application/json' } },
-        );
-      }
-      let body: Record<string, unknown> = {};
-      try {
-        const raw = await readRequestBody(req);
-        body = raw ? JSON.parse(raw) : {};
-      } catch (e) {
-        return new Response(
-          JSON.stringify({ error: 'bad request body', detail: (e as Error).message }),
-          { status: 400, headers: { 'content-type': 'application/json' } },
-        );
-      }
-      return dashboard.handlePrune({
-        force: body.force === true,
-        olderThanDays:
-          typeof body.olderThanDays === 'number' ? body.olderThanDays : undefined,
-        keepLast: typeof body.keepLast === 'number' ? body.keepLast : undefined,
-        sessionId: typeof body.sessionId === 'string' ? body.sessionId : undefined,
-      });
-    }
     case 'api-compression': {
       if (method !== 'POST') {
         return new Response(

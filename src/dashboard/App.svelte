@@ -9,7 +9,6 @@
   import LatestPng from './components/LatestPng.svelte';
   import Sessions from './components/Sessions.svelte';
   import StatsTable from './components/StatsTable.svelte';
-  import Cleanup from './components/Cleanup.svelte';
   import CompressionToggle from './components/CompressionToggle.svelte';
   import ToastTray from './components/ToastTray.svelte';
   import { stats } from './stores/index.js';
@@ -49,18 +48,13 @@
 </div>
 
 <div class="panel" style="margin-bottom:22px">
+  <h2>sessions <span class="small" style="color:#6e7681">(top savers)</span></h2>
   <Sessions />
 </div>
 
-<div class="row">
-  <div class="panel">
-    <h2>stats <span class="small" style="color:#6e7681">(full history)</span></h2>
-    <StatsTable />
-  </div>
-  <div class="panel">
-    <h2>cleanup</h2>
-    <Cleanup />
-  </div>
+<div class="panel" style="margin-bottom:22px">
+  <h2>stats <span class="small" style="color:#6e7681">(full history)</span></h2>
+  <StatsTable />
 </div>
 
 <ToastTray />

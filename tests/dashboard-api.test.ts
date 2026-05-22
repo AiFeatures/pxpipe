@@ -74,26 +74,15 @@ describe('dashboardPath()', () => {
 
   it('matches the new /api/* routes', () => {
     expect(dashboardPath('/api/sessions.json')?.kind).toBe('api-sessions');
-    expect(dashboardPath('/api/disk.json')?.kind).toBe('api-disk');
     expect(dashboardPath('/api/stats.json')?.kind).toBe('api-stats');
-    expect(dashboardPath('/api/sessions/prune')?.kind).toBe('api-prune');
-  });
-
-  it('extracts session IDs from dynamic paths', () => {
-    const r1 = dashboardPath('/api/sessions/abc12345.json');
-    expect(r1?.kind).toBe('api-session');
-    if (r1?.kind === 'api-session') expect(r1.sessionId).toBe('abc12345');
-
-    const r2 = dashboardPath('/sessions/abc12345');
-    expect(r2?.kind).toBe('session-html');
-    if (r2?.kind === 'session-html') expect(r2.sessionId).toBe('abc12345');
   });
 
   it('returns null for unknown paths', () => {
     expect(dashboardPath('/v1/messages')).toBeNull();
     expect(dashboardPath('/api/whatever.json')).toBeNull();
-    // Path-traversal style requests must not match the session regex.
-    expect(dashboardPath('/sessions/../etc/passwd')).toBeNull();
+    // The per-session detail routes were cut — these no longer match.
+    expect(dashboardPath('/api/sessions/abc12345.json')).toBeNull();
+    expect(dashboardPath('/sessions/abc12345')).toBeNull();
   });
 });
 
@@ -135,69 +124,7 @@ describe('serveSessionsJson', () => {
   });
 });
 
-// ---- /api/sessions/${id}.json --------------------------------------------
-
-describe('serveSessionJson', () => {
-  it('returns events for the matching id', async () => {
-    writeEvents(tmp, [
-      ev({ first_user_sha8: 'abc12345', ts: '2026-05-19T00:00:00Z' }),
-      ev({ first_user_sha8: 'abc12345', ts: '2026-05-19T00:01:00Z' }),
-      ev({ first_user_sha8: 'def67890', ts: '2026-05-19T00:02:00Z' }),
-    ]);
-    const res = await dash.serveSessionJson('abc12345', false);
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.id).toBe('abc12345');
-    expect(body.events).toHaveLength(2);
-    expect(body.includeBodies).toBe(false);
-  });
-
-  it('redacts body fields by default', async () => {
-    writeEvents(tmp, [
-      ev({
-        first_user_sha8: 'abc12345',
-        error_body: '{"x":1}',
-        req_body_sample_path: '/tmp/secret.gz',
-      }),
-    ]);
-    const res = await dash.serveSessionJson('abc12345', false);
-    const body = await res.json();
-    expect(body.events[0].error_body).toBeUndefined();
-    expect(body.events[0].req_body_sample_path).toBeUndefined();
-  });
-
-  it('keeps body fields when includeBodies=true', async () => {
-    writeEvents(tmp, [
-      ev({ first_user_sha8: 'abc12345', error_body: '{"x":1}' }),
-    ]);
-    const res = await dash.serveSessionJson('abc12345', true);
-    const body = await res.json();
-    expect(body.events[0].error_body).toBe('{"x":1}');
-    expect(body.includeBodies).toBe(true);
-  });
-
-  it('returns 404 for an unknown session', async () => {
-    writeEvents(tmp, [ev({ first_user_sha8: 'abc12345' })]);
-    const res = await dash.serveSessionJson('nothere', false);
-    expect(res.status).toBe(404);
-  });
-});
-
-// ---- /api/disk.json + /api/stats.json ------------------------------------
-
-describe('serveDiskJson', () => {
-  it('returns events.jsonl + sidecar totals', async () => {
-    writeEvents(tmp, [ev({ first_user_sha8: 'a' })]);
-    fs.mkdirSync(tmp.sidecarDir, { recursive: true });
-    fs.writeFileSync(path.join(tmp.sidecarDir, 's1.json.gz'), Buffer.alloc(123));
-    const res = dash.serveDiskJson();
-    const body = await res.json();
-    expect(body.eventsJsonlBytes).toBeGreaterThan(0);
-    expect(body.sidecarsBytes).toBe(123);
-    expect(body.sidecarCount).toBe(1);
-    expect(body.paths.eventsFile).toBe(tmp.eventsFile);
-  });
-});
+// ---- /api/stats.json ------------------------------------
 
 describe('serveApiStats', () => {
   it('aggregates the events file into a Summary-shaped JSON', async () => {
@@ -222,53 +149,5 @@ describe('serveApiStats', () => {
   it('404s when no events file exists', async () => {
     const res = await dash.serveApiStats();
     expect(res.status).toBe(404);
-  });
-});
-
-// ---- POST /api/sessions/prune --------------------------------------------
-
-describe('handlePrune', () => {
-  it('dry-runs by default (force=false reports but does not delete)', async () => {
-    writeEvents(tmp, [
-      ev({ first_user_sha8: 'old', ts: '2026-01-01T00:00:00Z' }),
-      ev({ first_user_sha8: 'new', ts: '2026-05-19T00:00:00Z' }),
-    ]);
-    const before = fs.readFileSync(tmp.eventsFile, 'utf8');
-    const res = await dash.handlePrune({ force: false, olderThanDays: 30 });
-    const body = await res.json();
-    expect(body.applied).toBe(false);
-    expect(body.sessionsRemoved).toContain('old');
-    expect(fs.readFileSync(tmp.eventsFile, 'utf8')).toBe(before);
-  });
-
-  it('actually rewrites events.jsonl when force=true', async () => {
-    writeEvents(tmp, [
-      ev({ first_user_sha8: 'old', ts: '2026-01-01T00:00:00Z' }),
-      ev({ first_user_sha8: 'new', ts: '2026-05-19T00:00:00Z' }),
-    ]);
-    const res = await dash.handlePrune({ force: true, sessionId: 'old' });
-    const body = await res.json();
-    expect(body.applied).toBe(true);
-    const remaining = fs
-      .readFileSync(tmp.eventsFile, 'utf8')
-      .trim()
-      .split('\n')
-      .map((l) => JSON.parse(l) as TrackEvent);
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]!.first_user_sha8).toBe('new');
-  });
-});
-
-// ---- session-html template ------------------------------------------------
-
-describe('serveSessionHtml', () => {
-  it('interpolates the session id into the template', () => {
-    const res = dash.serveSessionHtml('abc12345', 47821);
-    expect(res.headers.get('content-type')).toContain('text/html');
-    // Server-side template substitution happened (id appears in title + h1).
-    return res.text().then((html) => {
-      expect(html).toContain('abc12345');
-      expect(html).toContain('/api/sessions/');
-    });
   });
 });

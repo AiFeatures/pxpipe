@@ -4,10 +4,11 @@
   // selection and scroll position fight each other. Svelte's keyed each
   // block diffs by ts and only touches changed rows.
 
-  import { recent } from '../stores/index.js';
+  import { recent, selectedImageId } from '../stores/index.js';
   import { numFmt } from '../lib/format.js';
 
   $: rows = $recent.data?.recent ?? [];
+  $: imageIds = $recent.data?.image_ids ?? [];
 
   function statusCls(status: number): string {
     if (status >= 500) return 'bad';
@@ -32,6 +33,7 @@
       <th class="num">baseline</th>
       <th class="num">actual</th>
       <th class="num">saved</th>
+      <th class="num">img</th>
     </tr>
   </thead>
   <tbody>
@@ -48,9 +50,20 @@
             ? '+' + numFmt(e.session_saved_so_far_delta ?? 0)
             : '-'}
         </td>
+        <td class="num">
+          {#if e.img_id != null}
+            {#if imageIds.includes(e.img_id)}
+              <button class="view-btn" on:click={() => selectedImageId.set(e.img_id ?? null)}>view</button>
+            {:else}
+              <span class="muted">-</span>
+            {/if}
+          {:else}
+            <span class="muted">-</span>
+          {/if}
+        </td>
       </tr>
     {:else}
-      <tr><td colspan="8" class="small" style="color:#6e7681">no requests yet</td></tr>
+      <tr><td colspan="9" class="small" style="color:#6e7681">no requests yet</td></tr>
     {/each}
   </tbody>
 </table>
@@ -95,5 +108,20 @@
   }
   td.pos {
     color: #3fb950;
+  }
+  .muted {
+    color: #6e7681;
+  }
+  .view-btn {
+    font-size: 11px;
+    background: #21262d;
+    color: #58a6ff;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 1px 6px;
+    cursor: pointer;
+  }
+  .view-btn:hover {
+    background: #30363d;
   }
 </style>

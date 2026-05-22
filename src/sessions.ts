@@ -264,33 +264,6 @@ function sidecarFileSizes(dir: string): Map<string, number> {
   return out;
 }
 
-// ---- show ------------------------------------------------------------------
-
-export async function collectSessionEvents(
-  paths: SessionsPaths,
-  sessionId: string,
-): Promise<TrackEvent[]> {
-  const out: TrackEvent[] = [];
-  for await (const { ev } of readEvents(paths.eventsFile)) {
-    if (sessionIdOf(ev) === sessionId) out.push(ev);
-  }
-  return out;
-}
-
-/** Strip privacy-sensitive fields from an event for the dashboard's session
- *  detail view. 4xx body samples may contain raw user code pasted into a
- *  Claude Code conversation — we keep those out by default. */
-export function redactEvent(ev: TrackEvent, includeBodies: boolean): TrackEvent {
-  if (includeBodies) return ev;
-  const {
-    req_body_sample_b64: _b64,
-    req_body_sample_path: _p,
-    error_body: _eb,
-    ...rest
-  } = ev;
-  return rest as TrackEvent;
-}
-
 // ---- prune -----------------------------------------------------------------
 
 export interface PruneOptions {

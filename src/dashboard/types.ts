@@ -44,6 +44,7 @@ export interface RecentPayload {
   recent: RecentRow[];
   has_preview: boolean;
   preview_meta: string;
+  image_ids?: number[];
 }
 
 export interface RecentRow {
@@ -61,6 +62,7 @@ export interface RecentRow {
   actual_input?: number;
   baseline_input?: number;
   session_saved_so_far_delta?: number;
+  img_id?: number;
 }
 
 /** /api/sessions.json payload — bulk session aggregate + selection table. */
@@ -93,25 +95,6 @@ export interface ClaudeCodeRef {
   firstUserPreview?: string;
 }
 
-/** /api/sessions/$id.json payload. */
-export interface SessionDetailPayload {
-  id: string;
-  claudeCode: ClaudeCodeRef | null;
-  includeBodies: boolean;
-  events: SessionDetailEvent[];
-}
-
-export interface SessionDetailEvent {
-  ts: string;
-  method: string;
-  path: string;
-  status: number;
-  orig_chars?: number;
-  image_bytes?: number;
-  cache_read_tokens?: number;
-  [k: string]: unknown;
-}
-
 /** /api/stats.json payload — full-history aggregate. */
 export interface FullStatsPayload {
   parsed: number;
@@ -142,35 +125,7 @@ export interface FullStatsSummary {
   firstByteP95: number;
 }
 
-/** /api/disk.json payload. */
-export interface DiskPayload {
-  totalBytes: number;
-  eventsJsonlBytes: number;
-  sidecarBytes: number;
-  sidecarCount: number;
-  paths: {
-    eventsFile: string;
-    sidecarDir: string;
-  };
-  error?: string;
-}
-
 /** /api/compression POST response. */
 export interface CompressionToggleResponse {
   compression_enabled: boolean;
-}
-
-/** /api/sessions/prune POST response. */
-export interface PruneResponse {
-  sessionsRemoved: { sessionId: string }[];
-  eventsRemoved: number;
-  jsonlBytesFreed: number;
-  sidecarBytesFreed: number;
-}
-
-/** UI-level filter state for the session table. */
-export interface SessionFilters {
-  warmOnly: boolean;
-  compressedOnly: boolean;
-  search: string;
 }

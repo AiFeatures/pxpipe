@@ -5,7 +5,6 @@
 // sync with the routing table there.
 
 import type {
-  PruneResponse,
   CompressionToggleResponse,
 } from '../types.js';
 
@@ -14,10 +13,7 @@ export const API = {
   recent: '/proxy-recent',
   latestPng: '/proxy-latest-png',
   sessions: '/api/sessions.json',
-  sessionDetail: (id: string) => `/api/sessions/${encodeURIComponent(id)}.json`,
-  diskUsage: '/api/disk.json',
   fullStats: '/api/stats.json',
-  prune: '/api/sessions/prune',
   compressionToggle: '/api/compression',
 } as const;
 
@@ -45,34 +41,6 @@ export async function postJson<T>(url: string, body: unknown): Promise<T> {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
-  });
-}
-
-export async function dryRunPrune(opts: {
-  olderThanDays: number;
-  keepLast: number;
-  sessionIds?: string[];
-}): Promise<PruneResponse> {
-  return postJson<PruneResponse>(API.prune, {
-    olderThanDays: opts.olderThanDays,
-    keepLast: opts.keepLast,
-    sessionIds: opts.sessionIds,
-    force: false,
-  });
-}
-
-export async function executePrune(opts: {
-  olderThanDays?: number;
-  keepLast?: number;
-  sessionIds?: string[];
-  sessionId?: string;
-}): Promise<PruneResponse> {
-  return postJson<PruneResponse>(API.prune, {
-    olderThanDays: opts.olderThanDays,
-    keepLast: opts.keepLast,
-    sessionIds: opts.sessionIds,
-    sessionId: opts.sessionId,
-    force: true,
   });
 }
 
