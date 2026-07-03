@@ -44,7 +44,7 @@ rate is why Opus is opt-in.
 
 ```bash
 npx pxpipe-proxy                                  # proxy on 127.0.0.1:47821
-ANTHROPIC_BASE_URL=http://localhost:47821 claude  # point Claude Code at it
+ANTHROPIC_BASE_URL=http://127.0.0.1:47821 claude  # point Claude Code at it
 ```
 
 Dashboard at <http://127.0.0.1:47821/>: tokens saved, every text→image
