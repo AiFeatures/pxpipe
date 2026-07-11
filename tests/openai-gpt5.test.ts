@@ -23,7 +23,7 @@ afterEach(() => {
 // ── Task 1: applicability gate ──────────────────────────────────────────────
 
 describe('isPxpipeSupportedGptModel', () => {
-  it('keeps GPT 5.6 Sol, sibling variants, and GPT 5.5 off by default', () => {
+  it('keeps GPT 5.6 Sol and sibling models opt-in by default', () => {
     expect(isPxpipeSupportedGptModel('gpt-5')).toBe(false);
     expect(isPxpipeSupportedGptModel('gpt-5.5')).toBe(false);
     expect(isPxpipeSupportedGptModel('gpt-5.6')).toBe(false);
@@ -168,9 +168,8 @@ describe('transformOpenAIChatCompletions (gpt-5.6-sol)', () => {
     expect(parts[0]!.type).toBe('image_url');
     expect(parts[0]!.image_url!.url).toMatch(/^data:image\/png;base64,/);
 
-    // GPT 5.6 Sol has its own 6x11 JetBrains Mono profile. 126 cols keeps the
-    // physical strip below OpenAI's 768px short-side resize floor.
-    expect(result.info.firstImageWidth).toBe(764);
+    // Sol uses the native 5×8 Spleen profile at the 768px short-side edge.
+    expect(result.info.firstImageWidth).toBe(768);
 
     // System message replaced with pointer.
     const sysMsg = messages.find((m) => m.role === 'system')!;
@@ -256,6 +255,32 @@ const RESPONSES_TOOL_PARAMS = { type: 'object', description: 'Param root.', prop
 const RESPONSES_TOOL_DOC = `## Tool: do_thing\n${BIG_FLAT_TOOL_DESC}\n\`\`\`json\n${JSON.stringify(RESPONSES_TOOL_PARAMS)}\n\`\`\``;
 
 describe('transformOpenAIResponses (gpt-5.6-sol)', () => {
+  it('records original Responses composition with local o200k buckets', async () => {
+    const body = enc.encode(JSON.stringify({
+      model: 'gpt-5.6-sol',
+      instructions: BIG_INSTRUCTIONS,
+      input: [
+        { role: 'user', content: 'hello user' },
+        { type: 'reasoning', encrypted_content: 'opaque-reasoning-payload' },
+        { type: 'function_call', call_id: 'c1', name: 'search', arguments: '{"q":"x"}' },
+        { type: 'function_call_output', call_id: 'c1', output: 'tool output text' },
+      ],
+      tools: [{ type: 'function', name: 'search', description: 'Search docs', parameters: { type: 'object' } }],
+    }));
+    const result = await transformOpenAIResponses(body, { charsPerToken: 1, minCompressChars: 1 });
+    const c = result.info.responsesComposition!;
+    expect(c.instructions).toBeGreaterThan(0);
+    expect(c.userAssistant).toBeGreaterThan(0);
+    expect(c.reasoningEncrypted).toBeGreaterThan(0);
+    expect(c.functionCalls).toBeGreaterThan(0);
+    expect(c.functionOutputs).toBeGreaterThan(0);
+    expect(c.toolsJson).toBeGreaterThan(0);
+    expect(c.totalLocal).toBe(
+      c.instructions + c.systemDeveloper + c.userAssistant + c.functionCalls +
+      c.functionOutputs + c.reasoningEncrypted + c.compactionOpaque + c.toolsJson + c.other,
+    );
+  });
+
   it('compresses GPT Responses instructions + tool docs while preserving native tool selection metadata', async () => {
     const body = enc.encode(JSON.stringify({
       model: 'gpt-5.6-sol',
@@ -527,7 +552,7 @@ describe('transformOpenAIResponses — history collapse', () => {
     const out = JSON.parse(dec.decode(result.body)) as { input: Array<Record<string, unknown>> };
     // The first user item (slab anchor) is still present and first.
     expect((out.input[0] as { role?: string }).role).toBe('user');
-    // Exactly one synthetic history item carries input_image parts beyond the slab.
+    // Each selected pair is replaced at its original call position.
     const historyItems = out.input.filter((item) => {
       const c = (item as { content?: unknown }).content;
       return (
@@ -536,21 +561,94 @@ describe('transformOpenAIResponses — history collapse', () => {
         c.some((p) => (p as { text?: string }).text?.includes('attribute every turn strictly by its tag'))
       );
     });
-    expect(historyItems).toHaveLength(1);
-    const historyIdx = out.input.indexOf(historyItems[0]!);
-    expect((out.input[historyIdx + 1] as { role?: string }).role).toBe('developer');
-    expect(JSON.stringify(out.input[historyIdx + 1])).toContain('live current request');
+    expect(historyItems.length).toBe(result.info.responsesComposition!.collapsedFunctionPairs);
+    expect(historyItems.length).toBeGreaterThan(1);
+    const firstHistoryIdx = out.input.indexOf(historyItems[0]!);
+    expect(firstHistoryIdx).toBeGreaterThan(0); // slab and opening user state stay first
     const serialized = JSON.stringify(out.input);
-    // The opening prompt's BODY was collapsed into an image → its legible text is gone.
-    // Its bare marker may surface once in the verbatim fact-sheet beside the image (by
-    // design — precision-critical ids are kept as text); the repeated body does not.
-    expect(serialized).not.toContain(`${OPENING_PROMPT_MARKER} ${OPENING_PROMPT_MARKER}`);
+    const firstContinuation = out.input.findIndex((item) =>
+      typeof item.content === 'string' && item.content.includes('Continue with 0'),
+    );
+    expect(firstContinuation).toBeGreaterThan(firstHistoryIdx);
+    expect(out.input.indexOf(historyItems.at(-1)!)).toBeGreaterThan(firstContinuation);
+    // Responses pair mode keeps every conversational message native and images only
+    // old completed function_call/output pairs.
+    expect(serialized).toContain(`${OPENING_PROMPT_MARKER} ${OPENING_PROMPT_MARKER}`);
     expect(serialized).toContain(LIVE_PROMPT_MARKER);
     // The recent tail is still raw text items (function_call / user), not collapsed.
     const lastUser = [...out.input].reverse().find(
       (item) => (item as { role?: string }).role === 'user',
     ) as { content?: string };
     expect(typeof lastUser.content === 'string' && lastUser.content.includes(LIVE_PROMPT_MARKER)).toBe(true);
+  });
+
+  it('keeps recent/open Responses tool state native and removes completed old pairs atomically', async () => {
+    const items: Array<Record<string, unknown>> = [
+      { role: 'user', content: 'keep working on the live task' },
+    ];
+    for (let i = 0; i < 20; i++) {
+      const id = `closed_${i}`;
+      items.push({ type: 'reasoning', id: `rs_${i}`, encrypted_content: `native-${i}` });
+      items.push({ type: 'function_call', id: `fc_${i}`, call_id: id, name: 'exec_command', arguments: `{"cmd":"step ${i}"}` });
+      items.push({ type: 'function_call_output', call_id: id, output: (`closed-output-${i} `).repeat(180) });
+    }
+    items.push({ type: 'function_call', id: 'fc_open', call_id: 'active_open', name: 'exec_command', arguments: '{"cmd":"still running"}' });
+    const result = await transformOpenAIResponses(enc.encode(JSON.stringify({
+      model: 'gpt-5.6-sol', instructions: BIG_SLAB, input: items,
+    })), {
+      charsPerToken: 1, minCompressChars: 1,
+      gptHistory: { keepRecentPairs: 4, minCollapseTokens: 1, maxImages: 100 },
+    });
+    const out = JSON.parse(dec.decode(result.body)) as { input: Array<Record<string, unknown>> };
+    const nativeCalls = out.input.filter((x) => x.type === 'function_call');
+    const nativeOutputs = out.input.filter((x) => x.type === 'function_call_output');
+    const callIds = new Set(nativeCalls.map((x) => x.call_id));
+    const outputIds = new Set(nativeOutputs.map((x) => x.call_id));
+    // Every remaining output still has its native call; active call remains open.
+    expect([...outputIds].every((id) => callIds.has(id))).toBe(true);
+    expect(callIds.has('active_open')).toBe(true);
+    expect(outputIds.has('active_open')).toBe(false);
+    for (let i = 16; i < 20; i++) {
+      expect(callIds.has(`closed_${i}`)).toBe(true);
+      expect(outputIds.has(`closed_${i}`)).toBe(true);
+    }
+    // Reasoning/opaque native state is never swept into the synthetic image item.
+    expect(out.input.filter((x) => x.type === 'reasoning')).toHaveLength(20);
+    expect(result.info.responsesComposition).toMatchObject({
+      completedFunctionPairs: 20,
+      recentNativeFunctionPairs: 4,
+      oldFunctionPairs: 16,
+      openFunctionCalls: 1,
+      orphanFunctionOutputs: 0,
+      malformedFunctionItems: 0,
+    });
+    expect(result.info.responsesComposition!.collapsedFunctionPairs ?? 0).toBeGreaterThan(0);
+    expect(result.info.responsesComposition!.collapsedFunctionOutputs ?? 0).toBeGreaterThan(0);
+  });
+
+  it('emits a Responses request accepted by a strict call/output protocol validator', async () => {
+    const input = buildResponsesInput(24);
+    input.push({ type: 'function_call', id: 'fc_live', call_id: 'live_open', name: 'read', arguments: '{"path":"live"}' });
+    const result = await transformOpenAIResponses(enc.encode(JSON.stringify({
+      model: 'gpt-5.6-sol', instructions: BIG_SLAB, input,
+    })), {
+      charsPerToken: 1, minCompressChars: 1,
+      gptHistory: { keepRecentPairs: 5, minCollapseTokens: 1, maxImages: 100 },
+    });
+    const out = JSON.parse(dec.decode(result.body)) as { input: Array<Record<string, unknown>> };
+    const calls = new Map<string, number>();
+    const outputs = new Map<string, number>();
+    out.input.forEach((x, i) => {
+      if (x.type === 'function_call' && typeof x.call_id === 'string') calls.set(x.call_id, i);
+      if (x.type === 'function_call_output' && typeof x.call_id === 'string') outputs.set(x.call_id, i);
+    });
+    for (const [id, at] of outputs) {
+      expect(calls.has(id), `orphan output ${id}`).toBe(true);
+      expect(calls.get(id)!, `reversed pair ${id}`).toBeLessThan(at);
+    }
+    expect(calls.has('live_open')).toBe(true);
+    expect(outputs.has('live_open')).toBe(false);
+    expect(out.input.some((x) => Array.isArray(x.content) && (x.content as Array<{type?: string}>).some((p) => p.type === 'input_image'))).toBe(true);
   });
 
   it('produces a byte-stable history image sha across identical requests', async () => {
@@ -688,10 +786,14 @@ describe('GPT history collapse — pins the live request as text (autonomous sha
 
     const out = JSON.parse(dec.decode(result.body)) as { input: Array<Record<string, unknown>> };
     const serialized = JSON.stringify(out.input);
-    // The request survives as LEGIBLE TEXT (not OCR-only) under the pin banner.
-    expect(serialized).toContain('CURRENT USER REQUEST');
+    // The request survives as its original native message (not OCR-only).
     expect(serialized).toContain(LIVE_PROMPT_MARKER);
-    // The synthetic HISTORY item (not the slab) carries the pinned text + images.
+    const nativeRequest = out.input.find((it) =>
+      (it as { role?: string }).role === 'user' &&
+      typeof (it as { content?: unknown }).content === 'string' &&
+      String((it as { content?: unknown }).content).includes(LIVE_PROMPT_MARKER));
+    expect(nativeRequest).toBeDefined();
+    // The synthetic pair-history item (not the slab) carries images only.
     const hist = out.input.find((it) => {
       const c = (it as { content?: unknown }).content;
       return (
@@ -701,10 +803,7 @@ describe('GPT history collapse — pins the live request as text (autonomous sha
       );
     }) as { content: Array<{ type: string; text?: string }> };
     expect(hist).toBeDefined();
-    expect(hist.content.some((p) => p.type === 'input_text' && p.text?.includes(LIVE_PROMPT_MARKER))).toBe(true);
-    // The developer guard echoes the request verbatim.
-    const dev = out.input.find((it) => (it as { role?: string }).role === 'developer');
-    expect(JSON.stringify(dev)).toContain(LIVE_PROMPT_MARKER);
+    expect(hist.content.some((p) => p.type === 'input_text' && p.text?.includes(LIVE_PROMPT_MARKER))).toBe(false);
   });
 
   it('Chat: lone request kept as legible text + echoed in the guard, work imaged', async () => {

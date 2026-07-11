@@ -187,7 +187,7 @@ describe('serveFragment', () => {
       expect(off).not.toContain('<div class="models" style="display:none">');
       expect(off).toContain('GPT 5.6 Sol</button>');
       expect(off).toContain('GPT 5.5</button>');
-      // Sol remains available and ordered first, but neither GPT is silently on.
+      // Sol remains available and ordered before GPT 5.5.
       expect(off.indexOf('GPT 5.6 Sol')).toBeLessThan(off.indexOf('GPT 5.5'));
       expect(getAllowedModelBases()).toContain('claude-fable-5');
       expect(getAllowedModelBases()).not.toContain('grok-4.5');
@@ -222,11 +222,63 @@ describe('serveFragment', () => {
     expect(stats).toContain('requests');
   });
 
+  it('shows the OpenAI Responses composition in request Details', async () => {
+    dash.update({
+      method: 'POST', path: '/v1/responses', model: 'gpt-5.6-sol', status: 200,
+      durationMs: 1,
+      usage: { input_tokens: 500000, output_tokens: 10, cached_tokens: 490000 },
+      info: {
+        compressed: true, imageCount: 1, imagePngs: [new Uint8Array([1])],
+        imageDims: [{ width: 10, height: 10 }], imageTokens: 15000,
+        baselineImagedTokens: 56000, bucketChars: { history: 200000 },
+        responsesComposition: {
+          instructions: 1000, systemDeveloper: 2000, userAssistant: 450000,
+          functionCalls: 1000, functionOutputs: 20000, reasoningEncrypted: 5000,
+          compactionOpaque: 3000, toolsJson: 12000, other: 1000,
+          totalLocal: 495000, imageParts: 0,
+          completedFunctionPairs: 25, recentNativeFunctionPairs: 6,
+          oldFunctionPairs: 19, openFunctionCalls: 1,
+          imageableFunctionCalls: 900, imageableFunctionOutputs: 19000,
+          collapsedFunctionPairs: 10, collapsedFunctionCalls: 500,
+          collapsedFunctionOutputs: 12000,
+        },
+      } as never,
+    });
+    const html = await (await dash.serveFragment('context-map', new URL('http://localhost/fragments/context-map'), 1)).text();
+    expect(html).toContain('Original Responses composition');
+    expect(html).toContain('Reasoning / encrypted items');
+    expect(html).toContain('Native tool JSON');
+    expect(html).toContain('Function outputs eligible in old closed pairs');
+    expect(html).toContain('Function outputs actually imaged this request');
+    expect(html).toContain('Adjacent completed pairs');
+    expect(html).toContain('Open calls kept native');
+    expect(html).toContain('56.0k tok');
+    expect(html).toContain('sent to gpt-5.6-sol');
+    expect(html).toContain('Model reply (output)');
+    expect(html).toContain('never calls Anthropic /count_tokens');
+  });
+
   it('renders keyboard-accessible hover help for stat question marks', async () => {
     const header = await (await dash.serveFragment('header', url, 4711)).text();
     expect(header).toContain('class="q" tabindex="0"');
     expect(header).toContain('data-tip=');
     expect(header).toContain('aria-label=');
+  });
+
+  it('uses source text parallel to each captured PNG', async () => {
+    const ids = dash.captureImage({
+      imagePngs: [new Uint8Array([1]), new Uint8Array([2])],
+      imageDims: [{ width: 10, height: 10 }, { width: 20, height: 20 }],
+      imageSourceText: 'legacy shared',
+      imageSourceTexts: ['slab source', 'history section source'],
+    } as never);
+    const html = await (await dash.serveFragment(
+      'latest',
+      new URL(`http://localhost/fragments/latest?source=1&pin=${ids[1]}`),
+      1,
+    )).text();
+    expect(html).toContain('history section source');
+    expect(html).not.toContain('slab source');
   });
 
   it('escapes HTML in latest source text', async () => {
