@@ -4,7 +4,7 @@ All notable changes to pxpipe are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) (pre-1.0: minor = features /
 behavioral changes, patch = fixes).
 
-## Unreleased
+## 0.9.0 — 2026-07-14
 
 ### Changed
 - `gpt-5.6-sol` is now opt-in rather than silently enabled. Its exact profile
