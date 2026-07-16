@@ -124,7 +124,7 @@ export function renderModelsFragment(
     return (
       `<button class="chip${lit ? ' on' : ''}" type="button" ` +
       `hx-post="/fragments/models" hx-target="#frag-models" ` +
-      `hx-vals='{"model":"${id}","on":${!lit}}'>${escapeHtml(label)}${lit ? ' ✓' : ''}</button>`
+      `hx-vals='${escapeHtml(`{"model":${JSON.stringify(id)},"on":${!lit}}`)}'>${escapeHtml(label)}${lit ? ' ✓' : ''}</button>`
     );
   };
   const claudeChips = ids.filter((id) => id.startsWith('claude')).map(chipFor).join('');
