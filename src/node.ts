@@ -94,6 +94,47 @@ function applyConfigFileDefaults(): void {
   }
 }
 
+/** Dashboard persistence hook: write the runtime model scope back to the
+ *  config file's `models` key so chip toggles survive a restart. Other keys
+ *  are preserved; an invalid existing file is left untouched.
+ *  NOTE: on the next start an explicit PXPIPE_MODELS env still wins over the
+ *  persisted value (same precedence as every other config-file default). */
+function persistModelBasesToConfig(bases: readonly string[]): void {
+  const file = process.env.PXPIPE_CONFIG ?? DEFAULT_CONFIG_FILE;
+  let cfg: Record<string, unknown> = {};
+  let mode = 0o600;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      console.warn(`[pxpipe] could not persist model scope: invalid config object ${file}`);
+      return;
+    }
+    cfg = parsed as Record<string, unknown>;
+    mode = fs.statSync(file).mode & 0o777;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`[pxpipe] could not persist model scope: invalid config ${file}: ${(e as Error).message}`);
+      return;
+    }
+  }
+  // Empty array round-trips as 'off' via normalizeModelsConfig on load.
+  cfg.models = [...bases];
+  const tmp = `${file}.tmp-${process.pid}`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Write-then-rename so a crash mid-write can't corrupt the config.
+    fs.writeFileSync(tmp, `${JSON.stringify(cfg, null, 2)}\n`, { mode });
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try {
+      fs.unlinkSync(tmp);
+    } catch {
+      // The write may have failed before the temporary file was created.
+    }
+    console.warn(`[pxpipe] could not persist model scope to ${file}: ${(e as Error).message}`);
+  }
+}
+
 function parseCli(argv: string[]): RuntimeConfig {
   // Only flags accepted are --help and --version. Anything else is an
   // error — there is exactly ONE way to run pxpipe and the dashboard
@@ -192,8 +233,8 @@ Environment:
                           families through one gateway base URL
   PXPIPE_GATEWAY_BASE_URL gateway base URL (required with PXPIPE_PROVIDER)
   PXPIPE_GATEWAY_HEADERS  extra upstream headers: JSON object or k=v;k2=v2
-  PXPIPE_MODELS           comma-separated model bases to image (Claude/GPT/Grok);
-                          default claude-fable-5 (Sol/Opus/GPT-5.5/Grok opt-in);
+  PXPIPE_MODELS           comma-separated model bases to image (Claude/Gemini/GPT/Grok);
+                          default claude-fable-5,gemini-3.6-flash (Sol/Opus/GPT-5.5/Grok opt-in);
                           off disables
   PXPIPE_CONFIG           JSON config path (default ~/.config/pxpipe/config.json)
                           supports {"models": [...]} or {"models": "off"}
@@ -984,10 +1025,14 @@ async function main(): Promise<void> {
   // served via the route interception in front of the proxy handler. The
   // SessionsPaths handle lets the dashboard surface session/disk/stats data
   // without reaching back into module-scope globals.
-  const dashboard = new DashboardState({
-    eventsFile: opts.eventsFile,
-    sidecarDir: bodySidecarDir,
-  });
+  const dashboard = new DashboardState(
+    {
+      eventsFile: opts.eventsFile,
+      sidecarDir: bodySidecarDir,
+    },
+    undefined,
+    persistModelBasesToConfig,
+  );
   // Seed the "recent requests" table from the JSONL log so a process restart
   // doesn't reset what you can see in the UI. Best-effort; ignored on error.
   await dashboard.replay(opts.eventsFile).catch(() => {});
@@ -1049,7 +1094,9 @@ async function main(): Promise<void> {
       const tag = e.info?.compressed
         ? `compressed ${e.info.origChars}ch → ${e.info.imageCount}img/${e.info.imageBytes}B${extraTag}`
         : e.info?.reason
-          ? `savings:skip(${e.info.reason})`
+          ? e.info.reason === 'unsupported_model' && e.model
+            ? `skip(unsupported=${e.model})`
+            : `skip(${e.info.reason})`
           : '';
       const cacheRead = e.usage?.cache_read_input_tokens ?? 0;
       const inputTokens = e.usage?.input_tokens ?? 0;
