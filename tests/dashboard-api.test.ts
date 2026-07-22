@@ -662,6 +662,27 @@ describe('Gemini savings split', () => {
     expect(recent.recent.at(-1)?.session_saved_so_far_delta).toBe(280);
   });
 
+  it('does not apply Claude dollar pricing to legacy Gemini rows without provider metadata', async () => {
+    dash.update({
+      method: 'POST',
+      path: '/google-ai-studio/v1beta/models/gemini-3.6-flash:generateContent',
+      model: 'gemini-3.6-flash',
+      status: 200,
+      durationMs: 100,
+      usage: { input_tokens: 120, output_tokens: 10 },
+      info: {
+        compressed: true,
+        baselineTokens: 400,
+        baselineProbeStatus: 'ok',
+        imageCount: 1,
+      },
+    } as never);
+
+    const stats = (await dash.serveStats().json()) as StatsPayload;
+    expect(stats.saved_input_tokens).toBe(280);
+    expect(stats.saved_usd).toBe(0);
+  });
+
   it('shows estimated savings when optional Gemini measurement fails', async () => {
     dash.update({
       method: 'POST',

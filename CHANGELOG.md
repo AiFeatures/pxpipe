@@ -11,23 +11,25 @@ behavioral changes, patch = fixes).
   tool-result, and completed-history compression. Gemini joins Fable 5 in the
   default model set after scoring 100/100 novel arithmetic, 98/98 gist recall,
   18/18 state tracking, and 14/15 controlled dense-hex reads.
-- OpenAI Responses and Chat Completions bridges for Messages clients, with
-  completed tool-call rounds collapsed atomically and open/recent protocol
-  state kept native.
-- Scoped OpenAI and Cloudflare model routing, reversible Claude-safe discovery
-  aliases, and provider-aware usage accounting.
-- Offline `pxpipe export` workflow and public dense-render primitive.
-- Anthropic's patch-based vision-token model and model-specific render profiles.
+- Messages-to-OpenAI Responses and Messages-to-Chat Completions bridges, plus
+  exact-model routing to OpenAI and Cloudflare. Routed models appear through
+  reversible Claude-safe discovery aliases and use provider-aware accounting.
+- Completed tool-call rounds can now be compressed on Gemini and OpenAI while
+  open calls, malformed protocol state, and the recent working tail stay native.
 
 ### Changed
-- Removed the undocumented pre-1.0 `multiCol` SDK option and Worker setting;
-  Node and dashboard behavior remains single-column.
 - Missing atlas glyphs are escaped as `[U+HEX]` instead of silently dropped.
-- Gemini and OpenAI history compression preserve the live request and recent
-  tail as native text while imaging only closed old history.
+- Models are instructed not to guess exact identifiers, paths, hashes, versions,
+  or numbers that are visible only in an image and absent from the factsheet.
+- Anthropic profitability and export reports now use the documented 28-pixel
+  patch billing model instead of an area approximation.
 - Dashboard savings compare the same measured requests, account for one-hour
-  cache writes, and exclude Google traffic from Claude-priced dollar totals.
+  cache writes, and exclude current and legacy Google traffic from Claude-priced
+  dollar totals.
+- Dashboard model-scope changes persist in the Node config file across restarts.
 - 4xx request-body persistence is opt-in rather than enabled by default.
+- Compatibility: removed the pre-1.0 `multiCol` SDK option and Worker setting;
+  rendering is now single-column in every runtime.
 
 ### Fixed
 - History-only OpenAI requests now receive the planned synthetic history
@@ -43,16 +45,11 @@ behavioral changes, patch = fixes).
   are retained, and Node stream/error handling no longer leaks listeners or
   crashes on drain errors.
 - Dashboard model IDs are escaped before entering `hx-vals`.
+- Windows builds no longer fail when invoking pnpm from the build script.
 
 ### Rendering
-- **Glyph surgery: the Spleen 5×8 `K` no longer reads as `H`.** The stock font
-  rendered `K` as `H` with a single crossbar pixel removed — Hamming distance 1,
-  the worst confusable pair in the atlas
-  ([legibility audit §2](docs/LEGIBILITY-AUDIT-2026-07-01.md)). `gen-atlas.ts`
-  now repaints `K` with a diagonal-legged bitmap (Hamming 8 from `H`; no
-  alphanumeric pair below d=2). Scoped to the narrow Spleen 5×8 primary cell, so
-  the JetBrains-Mono and CJK-fallback atlases are untouched. Zero token-cost
-  change (same 5×8 box). Regression-guarded in `tests/render.test.ts`.
+- The Spleen 5×8 `K` glyph now uses a diagonal-legged bitmap after a Fable 5 A/B
+  reduced H/K errors from 47.2% to 18.7%, with no token-cost or geometry change.
 
 ### Known limitations / evidence
 - **Model-level A/B validation (2026-07-19, `claude-fable-5`, direct API):**
